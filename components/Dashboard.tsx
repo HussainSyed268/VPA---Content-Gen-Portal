@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchRows, createRow, updateStatus } from '@/lib/client';
-import type { ContentRow } from '@/lib/types';
+import type { ContentRow, Status } from '@/lib/types';
+
+const SPINNER_HTML = '<span class="spinner" aria-hidden="true"></span>';
 
 /* ============================================================
    STATUS MAP — from Section 4, in plain English
@@ -203,46 +205,85 @@ export default function Dashboard() {
   const [modal, setModal] = useState<ModalState>(null);
   const [toastMsg, setToastMsg] = useState('');
   const [toastShow, setToastShow] = useState(false);
+  const [toastError, setToastError] = useState(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const leaveTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
 
-  const reload = useCallback(async () => {
-    try {
-      const r = await fetchRows();
-      setRows(r);
-    } catch (err) {
-      console.error(err);
-      toast(err instanceof Error ? err.message : 'Could not load content');
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // init — load rows + set the "Last synced" time after mount (avoids hydration mismatch)
-  useEffect(() => {
-    reload();
-    refreshSynced();
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeModal(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // UX polish: loading / busy / leave animations
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [busyFromStatus, setBusyFromStatus] = useState<Status | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [leavingIds, setLeavingIds] = useState<Set<number>>(() => new Set());
 
   function refreshSynced() {
     const t = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
     setSynced(t);
   }
 
-  function toast(msg: string) {
+  function toast(msg: string, opts?: { error?: boolean }) {
+    setToastError(!!opts?.error);
     setToastMsg(msg);
     setToastShow(true);
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToastShow(false), 2600);
   }
 
+  const reload = useCallback(async (opts?: { soft?: boolean }) => {
+    const soft = !!opts?.soft;
+    if (soft) setIsRefreshing(true);
+    else setIsLoading(true);
+    try {
+      const r = await fetchRows();
+      setRows(r);
+      refreshSynced();
+    } catch (err) {
+      console.error(err);
+      toast(err instanceof Error ? err.message : 'Could not load content', { error: true });
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  }, []);
+
+  // init — load rows + set the "Last synced" time after mount (avoids hydration mismatch)
+  useEffect(() => {
+    reload({ soft: false });
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeModal(); };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      leaveTimers.current.forEach((t) => clearTimeout(t));
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function go(v: 'home' | 'library' | 'export') {
     setView(v);
     window.scrollTo({ top: 0, behavior: 'smooth' });
     if (v === 'home') resetCreate();
-    if (v === 'library' || v === 'export') reload();
+    if (v === 'library' || v === 'export') reload({ soft: true });
+  }
+
+  function markLeaving(id: number) {
+    setLeavingIds((prev) => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+    const existing = leaveTimers.current.get(id);
+    if (existing) clearTimeout(existing);
+    const t = setTimeout(() => {
+      setLeavingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      leaveTimers.current.delete(id);
+    }, 220);
+    leaveTimers.current.set(id, t);
   }
 
   // ---------- Needs-review signal ----------
@@ -270,8 +311,8 @@ export default function Dashboard() {
     return !!(t && sourceType && srcOk && plats.length > 0);
   }
   async function submitCreate() {
-    if (!validateForm()) return;
-    const row = {
+    if (!validateForm() || creating) return;
+    const payload = {
       title: title.trim(),
       sourceType: sourceType || undefined,
       sourceUrl: sourceType === 'url' ? urlVal.trim() : '',
@@ -279,11 +320,34 @@ export default function Dashboard() {
       outline: sourceType === 'outline' ? outlineVal.trim() : '',
       platforms: plats,
     };
-    await createRow(row);
+    const tempId = -Date.now();
+    const optimistic: ContentRow = {
+      id: tempId,
+      title: payload.title,
+      sourceType: payload.sourceType,
+      sourceUrl: payload.sourceUrl || undefined,
+      topic: payload.topic || undefined,
+      outline: payload.outline || undefined,
+      platforms: [...plats],
+      status: 'intake',
+      date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+    };
+    setCreating(true);
+    setRows((cur) => [optimistic, ...cur]);
     setConfirmShown(true);
-    reload();
     const anchor = document.getElementById('formAnchor');
     if (anchor) anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    try {
+      const created = await createRow(payload);
+      setRows((cur) => cur.map((r) => (r.id === tempId ? created : r)));
+      refreshSynced();
+    } catch (err) {
+      setRows((cur) => cur.filter((r) => r.id !== tempId));
+      setConfirmShown(false);
+      toast(err instanceof Error ? err.message : 'Could not create video', { error: true });
+    } finally {
+      setCreating(false);
+    }
   }
   function resetCreate() {
     setConfirmShown(false);
@@ -307,41 +371,112 @@ export default function Dashboard() {
     setSearchTerm('');
   }
 
-  function filterRows(all: ContentRow[]) {
-    let shown = all;
+  function rowMatchesFilters(r: ContentRow) {
     if (activeFilter !== 'all') {
       const st = STAGES.find((s) => s.key === activeFilter);
-      if (st) shown = all.filter((r) => st.statuses.includes(r.status));
+      if (st && !st.statuses.includes(r.status)) return false;
     }
     if (searchTerm) {
-      shown = shown.filter((r) => {
-        const hay = [r.title, r.topic, r.summary, r.sourceUrl, r.outline, ...dateHay(r)]
-          .filter(Boolean).join(' ').toLowerCase();
-        return hay.includes(searchTerm);
-      });
+      const hay = [r.title, r.topic, r.summary, r.sourceUrl, r.outline, ...dateHay(r)]
+        .filter(Boolean).join(' ').toLowerCase();
+      if (!hay.includes(searchTerm)) return false;
     }
-    return shown;
+    return true;
+  }
+
+  function filterRows(all: ContentRow[]) {
+    const matched = all.filter(rowMatchesFilters);
+    // Keep fading-out rows visible briefly after they leave the active filter.
+    const leaving = all.filter(
+      (r) => leavingIds.has(r.id) && !matched.some((m) => sameId(m.id, r.id))
+    );
+    return [...leaving, ...matched];
   }
 
   async function act(id: string | number, status: string) {
+    const rowId = Number(id);
+    if (busyId != null || !Number.isFinite(rowId)) return;
+
+    const prev = rows.find((x) => sameId(x.id, rowId));
+    if (!prev) return;
+
+    const nextStatus = status as Status;
+    const wouldLeave =
+      viewMode === 'review' &&
+      rowMatchesFilters(prev) &&
+      !rowMatchesFilters({ ...prev, status: nextStatus });
+
+    // Hold the card in the current filter while the request is in flight (pin via leavingIds
+    // without applying the fade class yet — fade starts after success).
+    if (wouldLeave) {
+      setLeavingIds((prevSet) => {
+        const next = new Set(prevSet);
+        next.add(rowId);
+        return next;
+      });
+    }
+
+    setBusyId(rowId);
+    setBusyAction(status);
+    setBusyFromStatus(prev.status);
+    setRows((cur) =>
+      cur.map((r) => (sameId(r.id, rowId) ? { ...r, status: nextStatus } : r))
+    );
+
+    const msg =
+      status === 'approved' ? 'Approved! Voice & video are being made.'
+      : status === 'posting_approved' ? 'Approved — queued to publish. 🎉'
+      : status === 'retry' ? 'Sent back for a script redo.'
+      : status === 'redo_video' ? 'Sent back for a video redo.'
+      : 'Marked as rejected.';
+    toast(msg);
+
     try {
-      await updateStatus(id, status as any);
-      const msg =
-        status === 'approved' ? 'Approved! Voice & video are being made.'
-        : status === 'posting_approved' ? 'Approved — queued to publish. 🎉'
-        : status === 'retry' ? 'Sent back for a script redo.'
-        : status === 'redo_video' ? 'Sent back for a video redo.'
-        : 'Marked as rejected.';
-      toast(msg);
+      const updated = await updateStatus(rowId, nextStatus);
+      setRows((cur) => cur.map((r) => (sameId(r.id, rowId) ? { ...r, ...updated } : r)));
       refreshSynced();
-      reload();
+      if (wouldLeave) markLeaving(rowId);
     } catch (err) {
-      toast(err instanceof Error ? err.message : 'Could not update status');
+      setRows((cur) => cur.map((r) => (sameId(r.id, rowId) ? prev : r)));
+      setLeavingIds((s) => {
+        const next = new Set(s);
+        next.delete(rowId);
+        return next;
+      });
+      toast(err instanceof Error ? err.message : 'Could not update status', { error: true });
+    } finally {
+      setBusyId(null);
+      setBusyAction(null);
+      setBusyFromStatus(null);
     }
   }
 
   // ---------- Modals ----------
   function closeModal() { setModal(null); }
+  function actionBtn(
+    klass: string,
+    actName: string,
+    id: number,
+    label: string,
+    iconSvg: string,
+    extraAttrs = ''
+  ) {
+    const cardBusy = busyId != null && sameId(busyId, id);
+    const thisBusy = cardBusy && busyAction === actName;
+    if (cardBusy) {
+      return `<button class="abtn ${klass} is-busy" disabled aria-busy="true">${thisBusy ? SPINNER_HTML : iconSvg}${label}</button>`;
+    }
+    return `<button class="abtn ${klass}" data-act="${actName}" data-id="${id}" ${extraAttrs}>${iconSvg}${label}</button>`;
+  }
+
+  function openBtn(klass: string, open: string, id: number, label: string, iconSvg: string) {
+    const cardBusy = busyId != null && sameId(busyId, id);
+    if (cardBusy) {
+      return `<button class="abtn ${klass} is-busy" disabled>${iconSvg}${label}</button>`;
+    }
+    return `<button class="abtn ${klass}" data-open="${open}" data-id="${id}">${iconSvg}${label}</button>`;
+  }
+
   function openItem(id: string | number) {
     const r = rows.find((x) => sameId(x.id, id)); if (!r) return;
     const s = STATUS[r.status] || ({} as any);
@@ -353,9 +488,9 @@ export default function Dashboard() {
     if (r.captionWeb) body += `<h4>Website caption</h4><div class="block">${esc(r.captionWeb)}</div>`;
     if (r.status === 'needs_review') {
       body += `<div class="card-actions" style="margin-top:8px">
-        <button class="abtn a-approve" data-act="approved" data-id="${r.id}" data-close="1">Approve</button>
-        <button class="abtn a-retry" data-act="retry" data-id="${r.id}" data-close="1">Redo</button>
-        <button class="abtn a-reject" data-act="rejected" data-id="${r.id}" data-close="1">Reject</button>
+        ${actionBtn('a-approve', 'approved', r.id, 'Approve', '', 'data-close="1"')}
+        ${actionBtn('a-retry', 'retry', r.id, 'Redo', '', 'data-close="1"')}
+        ${actionBtn('a-reject', 'rejected', r.id, 'Reject', '', 'data-close="1"')}
         <span class="act-hint">Approving creates the video in Dr. Bob’s voice.</span>
       </div>`;
     }
@@ -402,7 +537,9 @@ export default function Dashboard() {
     if (copy != null) { copyText(copy); return; }
     const actName = el.getAttribute('data-act');
     if (actName) {
+      if (el.hasAttribute('disabled') || el.classList.contains('is-busy')) return;
       const id = el.getAttribute('data-id')!;
+      if (busyId != null && sameId(busyId, id)) return;
       act(id, actName);
       if (el.getAttribute('data-close')) closeModal();
     }
@@ -411,37 +548,51 @@ export default function Dashboard() {
   // ---------- Card HTML (Review Queue) ----------
   function cardHTML(r: ContentRow) {
     const s = STATUS[r.status] || { label: r.status, klass: 'st-working', say: '' };
+    // While a request is in flight, keep the action set from the prior status so the spinner stays visible.
+    const actionStatus =
+      busyId != null && sameId(busyId, r.id) && busyFromStatus
+        ? busyFromStatus
+        : r.status;
+    const eye = `<svg viewBox="0 0 24 24" fill="none"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="2.5" stroke="currentColor" stroke-width="2"/></svg>`;
+    const check = `<svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    const redo = `<svg viewBox="0 0 24 24" fill="none"><path d="M4 12a8 8 0 018-8 8 8 0 016.9 4M20 4v4h-4M20 12a8 8 0 01-8 8 8 8 0 01-6.9-4M4 20v-4h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    const x = `<svg viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>`;
+    const play = `<svg viewBox="0 0 24 24" fill="none"><path d="M9 8v8l6-4-6-4Z" fill="currentColor"/></svg>`;
+    const share = `<svg viewBox="0 0 24 24" fill="none"><path d="M4 12v7a1 1 0 001 1h14a1 1 0 001-1v-7M16 6l-4-4-4 4M12 2v13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+
     let mid = `<div class="say">${s.say}</div>`;
-    if (r.status === 'needs_review' && r.script) {
+    if (actionStatus === 'needs_review' && r.script) {
       mid = `<div class="script-prev clip">${esc(r.script).slice(0, 260)}</div>` + mid;
     }
     let actions = '';
-    if (r.status === 'needs_review') {
+    if (actionStatus === 'needs_review') {
       actions = `
-        <button class="abtn a-open" data-open="item" data-id="${r.id}"><svg viewBox="0 0 24 24" fill="none"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="2.5" stroke="currentColor" stroke-width="2"/></svg>Read script</button>
-        <button class="abtn a-approve" data-act="approved" data-id="${r.id}"><svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Approve</button>
-        <button class="abtn a-retry" data-act="retry" data-id="${r.id}"><svg viewBox="0 0 24 24" fill="none"><path d="M4 12a8 8 0 018-8 8 8 0 016.9 4M20 4v4h-4M20 12a8 8 0 01-8 8 8 8 0 01-6.9-4M4 20v-4h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Redo</button>
-        <button class="abtn a-reject" data-act="rejected" data-id="${r.id}"><svg viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>Reject</button>
+        ${openBtn('a-open', 'item', r.id, 'Read script', eye)}
+        ${actionBtn('a-approve', 'approved', r.id, 'Approve', check)}
+        ${actionBtn('a-retry', 'retry', r.id, 'Redo', redo)}
+        ${actionBtn('a-reject', 'rejected', r.id, 'Reject', x)}
         <span class="act-hint">Approving creates the video in Dr. Bob’s voice.</span>`;
-    } else if (r.status === 'video_ready') {
+    } else if (actionStatus === 'video_ready') {
       actions = `
-        <button class="abtn a-watch" data-open="video" data-id="${r.id}"><svg viewBox="0 0 24 24" fill="none"><path d="M9 8v8l6-4-6-4Z" fill="currentColor"/></svg>Watch the video</button>
-        <button class="abtn a-approve" data-act="posting_approved" data-id="${r.id}"><svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Approve to post</button>
-        <button class="abtn a-retry" data-act="redo_video" data-id="${r.id}"><svg viewBox="0 0 24 24" fill="none"><path d="M4 12a8 8 0 018-8 8 8 0 016.9 4M20 4v4h-4M20 12a8 8 0 01-8 8 8 8 0 01-6.9-4M4 20v-4h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Redo video</button>
+        ${openBtn('a-watch', 'video', r.id, 'Watch the video', play)}
+        ${actionBtn('a-approve', 'posting_approved', r.id, 'Approve to post', check)}
+        ${actionBtn('a-retry', 'redo_video', r.id, 'Redo video', redo)}
         <span class="act-hint">Approving queues it to publish to ${platText(r.platforms)}.</span>`;
-    } else if (r.status === 'posted') {
+    } else if (actionStatus === 'posted') {
       actions = `
-        <button class="abtn a-share" data-open="share" data-id="${r.id}"><svg viewBox="0 0 24 24" fill="none"><path d="M4 12v7a1 1 0 001 1h14a1 1 0 001-1v-7M16 6l-4-4-4 4M12 2v13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Share links</button>
-        <button class="abtn a-open" data-open="video" data-id="${r.id}"><svg viewBox="0 0 24 24" fill="none"><path d="M9 8v8l6-4-6-4Z" fill="currentColor"/></svg>Watch</button>`;
+        ${openBtn('a-share', 'share', r.id, 'Share links', share)}
+        ${openBtn('a-open', 'video', r.id, 'Watch', play)}`;
     } else {
-      actions = `<button class="abtn a-open" data-open="item" data-id="${r.id}"><svg viewBox="0 0 24 24" fill="none"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="2.5" stroke="currentColor" stroke-width="2"/></svg>Details</button>`;
+      actions = openBtn('a-open', 'item', r.id, 'Details', eye);
     }
 
     const dateLabel = (r.status === 'posted' && r.postedAt) ? 'Posted ' + r.postedAt
       : r.date ? 'Created ' + r.date : '';
     const dateHTML = dateLabel
       ? `<div class="date"><svg viewBox="0 0 24 24" fill="none"><rect x="3" y="4.5" width="18" height="16" rx="2.5" stroke="currentColor" stroke-width="2"/><path d="M3 9h18M8 2.5v4M16 2.5v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>${dateLabel}</div>` : '';
-    return `<div class="card">
+    const fading =
+      leavingIds.has(r.id) && (busyId == null || !sameId(busyId, r.id));
+    return `<div class="card${fading ? ' is-leaving' : ''}">
       <div class="row1">
         <div>
           <h3>${esc(r.title)}</h3>
@@ -460,7 +611,9 @@ export default function Dashboard() {
   // ---------- Review Queue render ----------
   const shown = filterRows(rows);
   let cardsHTML: string;
-  if (!shown.length) {
+  if (isLoading && !rows.length) {
+    cardsHTML = emptyBlock('Loading your content…');
+  } else if (!shown.length) {
     const stage = STAGES.find((s) => s.key === activeFilter);
     const msg = searchTerm ? `No matches for “${esc(searchTerm)}”.`
       : stage ? `No videos in “${stage.label}” right now.`
@@ -477,9 +630,13 @@ export default function Dashboard() {
       items = items.filter((r) => [r.title, r.topic, r.summary, r.sourceUrl, r.outline, ...dateHay(r)]
         .filter(Boolean).join(' ').toLowerCase().includes(searchTerm));
     }
+    // Keep leaving cards visible in their prior column briefly via leavingIds + current status may differ —
+    // pipeline uses current status only; leaving fade still applies via class when present in column.
     const cards = items.map((r) => {
       const p = PIPE[r.status] || { pill: r.status, ic: '', tone: 'grey' };
-      return `<div class="pcard" data-open="item" data-id="${r.id}">
+      const fading =
+        leavingIds.has(r.id) && (busyId == null || !sameId(busyId, r.id));
+      return `<div class="pcard${fading ? ' is-leaving' : ''}" data-open="item" data-id="${r.id}">
           <div class="pcard-title">${esc(r.title)}</div>
           <span class="pill pill-${p.tone}">${p.ic} ${p.pill}</span>
         </div>`;
@@ -493,8 +650,9 @@ export default function Dashboard() {
   // Delegate clicks inside the dynamically-built library HTML (cards + board).
   function onLibraryClick(e: React.MouseEvent) {
     const el = (e.target as HTMLElement).closest('[data-act],[data-open]') as HTMLElement | null;
-    if (!el) return;
+    if (!el || el.hasAttribute('disabled') || el.classList.contains('is-busy')) return;
     const id = el.getAttribute('data-id')!;
+    if (busyId != null && sameId(busyId, id) && el.hasAttribute('data-act')) return;
     const open = el.getAttribute('data-open');
     if (open === 'item') return openItem(id);
     if (open === 'video') return openVideo(id);
@@ -679,9 +837,11 @@ export default function Dashboard() {
             </div>
 
             <div className="form-foot">
-              <button className="btn btn-create" id="createBtn" disabled={!createValid} onClick={submitCreate}>
-                <svg viewBox="0 0 24 24" fill="none" width="20" height="20"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                Create My Video
+              <button className="btn btn-create" id="createBtn" disabled={!createValid || creating} onClick={submitCreate}>
+                {creating
+                  ? <span className="spinner" aria-hidden="true" />
+                  : <svg viewBox="0 0 24 24" fill="none" width="20" height="20"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+                {creating ? 'Creating…' : 'Create My Video'}
               </button>
               <button className="btn btn-ghost" onClick={resetCreate}>Clear</button>
               <div className="form-note">The engine writes a draft script for you to review first — nothing is posted without your approval.</div>
@@ -737,19 +897,33 @@ export default function Dashboard() {
               <input type="text" id="searchInput" placeholder="Search by title, topic, or date…" value={searchTerm} onChange={(e) => onSearch(e.target.value)} />
               <button className={'clr' + (searchTerm ? ' show' : '')} id="searchClear" onClick={clearSearch}>✕</button>
             </div>
-            <span className="synced" id="syncedLabel">{synced && (<><span className="dot"></span>Last synced {synced}</>)}</span>
+            <span className={'synced' + (isRefreshing ? ' is-refreshing' : '')} id="syncedLabel">
+              {synced && (<><span className="dot"></span>{isRefreshing ? 'Syncing…' : `Last synced ${synced}`}</>)}
+            </span>
           </div>
+
+          {(isLoading || isRefreshing) && <div className="load-strip" aria-hidden="true" />}
 
           <div id="reviewPane" style={{ display: viewMode === 'review' ? 'block' : 'none' }}>
             <div className="filter-note" id="filterNote" style={{ display: activeFilter !== 'all' ? 'flex' : 'none' }}>
               <span>Showing <b>{filterNoteStage ? filterNoteStage.label : ''}</b></span>
               <button onClick={() => setFilter('all')}>Show all {rows.length}</button>
             </div>
-            <div className="cards" id="cards" onClick={onLibraryClick} dangerouslySetInnerHTML={{ __html: cardsHTML }} />
+            <div
+              className={'cards' + (isRefreshing ? ' list-refreshing' : '')}
+              id="cards"
+              onClick={onLibraryClick}
+              dangerouslySetInnerHTML={{ __html: cardsHTML }}
+            />
           </div>
 
           <div id="pipelinePane" style={{ display: viewMode === 'review' ? 'none' : 'block' }}>
-            <div className="board" id="board" onClick={onLibraryClick} dangerouslySetInnerHTML={{ __html: boardHTML }} />
+            <div
+              className={'board' + (isRefreshing ? ' list-refreshing' : '')}
+              id="board"
+              onClick={onLibraryClick}
+              dangerouslySetInnerHTML={{ __html: boardHTML }}
+            />
           </div>
         </section>
 
@@ -810,8 +984,10 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className={'toast' + (toastShow ? ' show' : '')} id="toast">
-        <svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+      <div className={'toast' + (toastShow ? ' show' : '') + (toastError ? ' error' : '')} id="toast">
+        {toastError
+          ? <svg viewBox="0 0 24 24" fill="none"><path d="M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+          : <svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>}
         <span id="toastMsg">{toastMsg}</span>
       </div>
     </>
