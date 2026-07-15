@@ -1,43 +1,50 @@
 import type { ContentRow, NewRowInput, Status } from './types';
-import { SEED_ROWS } from './mock-data';
+import { sheetsCreateRow, sheetsListRows, sheetsSetStatus } from './sheets/client';
+import { fromSheetRow, parseRowId, toSheetCreatePayload } from './sheets/map';
+import { assertUserTransition, toAppStatus, toSheetStatus } from './sheets/status';
 
 /* ============================================================
-   DATA LAYER — in-memory store
+   DATA LAYER — Google Sheets via Apps Script Web App
    ------------------------------------------------------------
-   TODO: Replace this in-memory store with Google Sheets (Apps
-   Script Web App or Sheets API). Column names map 1:1 to the
-   sheet per manual §3.1.
-
-   NOTE: This module-level array lives in the server process, so
-   it resets whenever the dev/prod server restarts. Wire up real
-   persistence (Google Sheets) to keep data between restarts.
+   SHEETS_WEBAPP_URL (server env) points at the deployed /exec URL.
+   Column mapping and status normalization live in lib/sheets/.
    ============================================================ */
 
-// Seed from the mock data. Cloned so mutations don't touch the seed constant.
-const rows: ContentRow[] = SEED_ROWS.map((r) => ({ ...r }));
-
-// Read every row (newest first, matching the original unshift behavior).
-export function getRows(): ContentRow[] {
-  return rows;
+export async function getRows(): Promise<ContentRow[]> {
+  const raw = await sheetsListRows();
+  // Newest first (higher sheet row numbers are later appends).
+  return raw.map(fromSheetRow).sort((a, b) => b.id - a.id);
 }
 
-// Add a new idea: assigns an id, sets status 'intake', stamps today's date.
-export function addRow(partial: NewRowInput): ContentRow {
-  const row: ContentRow = {
-    ...partial,
-    id: 'r' + (rows.length + 1) + '_' + Date.now(),
-    status: 'intake',
-    date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-    platforms: partial.platforms || [],
-    title: partial.title || '',
-  };
-  rows.unshift(row);
-  return row;
+export async function addRow(partial: NewRowInput): Promise<ContentRow> {
+  const created = await sheetsCreateRow(toSheetCreatePayload(partial));
+  return fromSheetRow(created);
 }
 
-// Set a row's status (approved / retry / rejected / scheduled, etc.).
-export function setStatus(id: string, status: Status): ContentRow | undefined {
-  const r = rows.find((x) => x.id === id);
-  if (r) r.status = status;
-  return r;
+export async function setStatus(
+  id: string | number,
+  status: Status
+): Promise<ContentRow | undefined> {
+  const rowId = parseRowId(id);
+
+  // Enforce portal transition rules against the live sheet row.
+  const rows = await sheetsListRows();
+  const currentRaw = rows.find((r) => Number(r.id) === rowId);
+  if (!currentRaw) return undefined;
+
+  const current = toAppStatus(currentRaw.status);
+  assertUserTransition(current, status);
+
+  const sheetStatus = toSheetStatus(status);
+  const result = await sheetsSetStatus(rowId, sheetStatus);
+  if (!result) return undefined;
+
+  if (result.row) return fromSheetRow(result.row);
+
+  const refreshed = await sheetsListRows();
+  const found = refreshed.find((r) => Number(r.id) === rowId);
+  if (!found) {
+    return { ...fromSheetRow(currentRaw), status };
+  }
+  return { ...fromSheetRow(found), status };
 }

@@ -4,12 +4,24 @@ import type { NewRowInput } from '@/lib/types';
 
 // GET /api/content — read every row.
 export async function GET() {
-  return NextResponse.json(getRows());
+  try {
+    return NextResponse.json(await getRows());
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Failed to load content';
+    console.error('[GET /api/content]', err);
+    return NextResponse.json({ error: message }, { status: 502 });
+  }
 }
 
 // POST /api/content — add a new idea (the "You" columns). Returns the new row.
 export async function POST(req: Request) {
-  const body = (await req.json()) as NewRowInput;
-  const row = addRow(body);
-  return NextResponse.json(row);
+  try {
+    const body = (await req.json()) as NewRowInput;
+    const row = await addRow(body);
+    return NextResponse.json(row);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Failed to create content';
+    console.error('[POST /api/content]', err);
+    return NextResponse.json({ error: message }, { status: 502 });
+  }
 }

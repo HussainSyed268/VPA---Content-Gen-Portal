@@ -1,27 +1,26 @@
-// Content status values used across the pipeline.
-// Mirrors the STATUS map and status strings in the original single-file dashboard.
+// Content status values — stable app keys. Sheet cells use the emoji labels
+// in lib/sheets/status.ts (SHEET_STATUS).
 export type Status =
-  | 'intake'
-  | 'scraping'
-  | 'drafting'
-  | 'needs_review'
-  | 'retry'
-  | 'approved'
-  | 'rejected'
-  | 'voice_generating'
-  | 'voice_ready'
-  | 'video_generating'
-  | 'video_ready'
-  | 'scheduled'
-  | 'posted'
-  | 'failed_scrape'
-  | 'failed_voice'
-  | 'failed_video';
+  | 'intake' // New ✏️
+  | 'in_progress' // In Progress ⏳
+  | 'drafting' // Writing Script ✍️
+  | 'needs_review' // Review Needed 👀
+  | 'retry' // Redo Script 🔄
+  | 'approved' // Approved ✅
+  | 'rejected' // Rejected ❌
+  | 'voice_generating' // Generating Voice 🎙️
+  | 'voice_ready' // Voice Ready 🔊
+  | 'video_generating' // Generating Video 🎬
+  | 'video_ready' // Video Ready 🎥
+  | 'posting_approved' // Posting Approved ✅
+  | 'redo_video' // Redo Video 🔁
+  | 'posted' // Posted 🚀
+  | 'failed'; // Failed ❌
 
-// A single piece of content. Keys map 1:1 to the Google Sheet columns
-// (manual §3.1). Optional fields may be blank/absent depending on status.
+// A single piece of content. Keys map to sheet columns via lib/sheets/map.ts.
 export interface ContentRow {
-  id: string;
+  /** Sheet row number (header is row 1; data starts at 2). Not a stored column. */
+  id: number;
   date?: string;
   title: string;
   sourceType?: 'url' | 'topic' | 'outline';

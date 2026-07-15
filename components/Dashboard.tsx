@@ -8,69 +8,67 @@ import type { ContentRow } from '@/lib/types';
    STATUS MAP — from Section 4, in plain English
    ============================================================ */
 const STATUS: Record<string, { label: string; klass: string; say: string }> = {
-  intake: { label: 'Received', klass: 'st-working', say: 'The engine just got your idea and is picking it up.' },
-  scraping: { label: 'Reading your link', klass: 'st-working', say: 'Fetching the content from your link.' },
-  failed_scrape: { label: 'Link problem', klass: 'st-stop', say: 'Couldn’t open that link. Check it’s correct, then try again.' },
+  intake: { label: 'New', klass: 'st-working', say: 'The engine just got your idea and is picking it up.' },
+  in_progress: { label: 'In progress', klass: 'st-working', say: 'Your idea is being processed.' },
   drafting: { label: 'Writing script', klass: 'st-working', say: 'Researching the topic and writing your script — back shortly.' },
-  needs_review: { label: 'Ready to review', klass: 'st-review', say: 'Your script is ready! Read it, then choose Approve, Retry, or Reject.' },
+  needs_review: { label: 'Review needed', klass: 'st-review', say: 'Your script is ready! Read it, then choose Approve, Redo Script, or Reject.' },
+  retry: { label: 'Redo script', klass: 'st-working', say: 'A fresh version of the script is on the way.' },
   approved: { label: 'Approved', klass: 'st-ready', say: 'You approved it — voice & video are being made. Sit back.' },
-  retry: { label: 'New draft coming', klass: 'st-working', say: 'A fresh version of the script is on the way.' },
-  rejected: { label: 'Not proceeding', klass: 'st-stop', say: 'This one was stopped and archived. No further action.' },
-  voice_generating: { label: 'Making voiceover', klass: 'st-working', say: 'Recording the voiceover in Dr. Bob’s cloned voice.' },
-  voice_ready: { label: 'Voiceover done', klass: 'st-working', say: 'Voiceover is done — video is next.' },
-  video_generating: { label: 'Making video', klass: 'st-working', say: 'Rendering the AI avatar video. This can take a few minutes.' },
-  video_ready: { label: 'Video ready', klass: 'st-ready', say: 'Your video is done! Give it a quick watch.' },
-  scheduled: { label: 'Scheduled', klass: 'st-ready', say: 'Queued to post automatically at the best time.' },
-  posted: { label: 'Live', klass: 'st-live', say: 'Published! Tap Share to grab the links.' },
-  failed_voice: { label: 'Voice error', klass: 'st-stop', say: 'Something went wrong with the voice. The VPA team is on it.' },
-  failed_video: { label: 'Video error', klass: 'st-stop', say: 'Something went wrong with the video. The VPA team is on it.' },
+  rejected: { label: 'Rejected', klass: 'st-stop', say: 'This one was stopped and archived. No further action.' },
+  voice_generating: { label: 'Generating voice', klass: 'st-working', say: 'Recording the voiceover in Dr. Bob’s cloned voice.' },
+  voice_ready: { label: 'Voice ready', klass: 'st-working', say: 'Voiceover is done — video is next.' },
+  video_generating: { label: 'Generating video', klass: 'st-working', say: 'Rendering the AI avatar video. This can take a few minutes.' },
+  video_ready: { label: 'Video ready', klass: 'st-ready', say: 'Your video is done! Give it a quick watch, then Approve to post or Redo Video.' },
+  posting_approved: { label: 'Posting approved', klass: 'st-ready', say: 'Queued to post automatically at the best time.' },
+  redo_video: { label: 'Redo video', klass: 'st-working', say: 'A new video render is on the way.' },
+  posted: { label: 'Posted', klass: 'st-live', say: 'Published! Tap Share to grab the links.' },
+  failed: { label: 'Failed', klass: 'st-stop', say: 'Something went wrong. The VPA team is on it.' },
 };
 
 // Top stat cards — action-oriented buckets. Each is a filter AND a live count.
 const STAGES = [
   { key: 'review', label: 'Scripts to review', color: 'var(--warn)', icon: '👀', statuses: ['needs_review'] },
   { key: 'approve', label: 'Videos to approve', color: 'var(--brand)', icon: '🎥', statuses: ['video_ready'] },
-  { key: 'production', label: 'In production', color: '#7C5CD6', icon: '🎬', statuses: ['intake', 'scraping', 'drafting', 'retry', 'approved', 'voice_generating', 'voice_ready', 'video_generating', 'scheduled'] },
+  { key: 'production', label: 'In production', color: '#7C5CD6', icon: '🎬', statuses: ['intake', 'in_progress', 'drafting', 'retry', 'approved', 'voice_generating', 'voice_ready', 'video_generating', 'posting_approved', 'redo_video'] },
   { key: 'published', label: 'Published', color: 'var(--ok)', icon: '🚀', statuses: ['posted'] },
-  { key: 'attention', label: 'Needs attention', color: 'var(--danger)', icon: '⚠️', statuses: ['failed_scrape', 'failed_voice', 'failed_video'] },
+  { key: 'attention', label: 'Needs attention', color: 'var(--danger)', icon: '⚠️', statuses: ['failed'] },
 ];
 
 // Pipeline board columns, left -> right.
 const COLUMNS = [
-  { key: 'drafting', label: 'Drafting', icon: '📝', statuses: ['intake', 'scraping', 'drafting', 'retry'] },
+  { key: 'drafting', label: 'Drafting', icon: '📝', statuses: ['intake', 'in_progress', 'drafting', 'retry'] },
   { key: 'screview', label: 'Script Review', icon: '👀', statuses: ['needs_review'] },
-  { key: 'production', label: 'In Production', icon: '🎬', statuses: ['approved', 'voice_generating', 'voice_ready', 'video_generating'] },
+  { key: 'production', label: 'In Production', icon: '🎬', statuses: ['approved', 'voice_generating', 'voice_ready', 'video_generating', 'redo_video'] },
   { key: 'vreview', label: 'Video Review', icon: '🎥', statuses: ['video_ready'] },
-  { key: 'published', label: 'Published', icon: '🚀', statuses: ['scheduled', 'posted'] },
-  { key: 'attention', label: 'Needs Attention', icon: '⚠️', statuses: ['failed_scrape', 'failed_voice', 'failed_video', 'rejected'] },
+  { key: 'published', label: 'Published', icon: '🚀', statuses: ['posting_approved', 'posted'] },
+  { key: 'attention', label: 'Needs Attention', icon: '⚠️', statuses: ['failed', 'rejected'] },
 ];
 
 // Per-status pill shown on pipeline cards: label, emoji, colour tone.
 const PIPE: Record<string, { pill: string; ic: string; tone: string }> = {
-  intake: { pill: 'In progress', ic: '⏳', tone: 'grey' },
-  scraping: { pill: 'Reading link', ic: '🔗', tone: 'grey' },
+  intake: { pill: 'New', ic: '✏️', tone: 'grey' },
+  in_progress: { pill: 'In progress', ic: '⏳', tone: 'grey' },
   drafting: { pill: 'Writing script', ic: '✍️', tone: 'grey' },
   retry: { pill: 'Redo script', ic: '🔄', tone: 'amber' },
   needs_review: { pill: 'Review needed', ic: '👀', tone: 'amber' },
-  approved: { pill: 'Script approved', ic: '✅', tone: 'purple' },
-  voice_generating: { pill: 'Recording voice', ic: '🎙️', tone: 'purple' },
-  voice_ready: { pill: 'Voice ready', ic: '🎙️', tone: 'purple' },
-  video_generating: { pill: 'Filming avatar', ic: '🎬', tone: 'purple' },
+  approved: { pill: 'Approved', ic: '✅', tone: 'purple' },
+  voice_generating: { pill: 'Generating voice', ic: '🎙️', tone: 'purple' },
+  voice_ready: { pill: 'Voice ready', ic: '🔊', tone: 'purple' },
+  video_generating: { pill: 'Generating video', ic: '🎬', tone: 'purple' },
+  redo_video: { pill: 'Redo video', ic: '🔁', tone: 'amber' },
   video_ready: { pill: 'Video ready', ic: '🎥', tone: 'blue' },
-  scheduled: { pill: 'Approved to post', ic: '✅', tone: 'green' },
+  posting_approved: { pill: 'Posting approved', ic: '✅', tone: 'green' },
   posted: { pill: 'Posted', ic: '🚀', tone: 'green' },
-  failed_scrape: { pill: 'Failed', ic: '⚠️', tone: 'red' },
-  failed_voice: { pill: 'Failed', ic: '⚠️', tone: 'red' },
-  failed_video: { pill: 'Failed', ic: '⚠️', tone: 'red' },
-  rejected: { pill: 'Rejected', ic: '🚫', tone: 'grey' },
+  failed: { pill: 'Failed', ic: '❌', tone: 'red' },
+  rejected: { pill: 'Rejected', ic: '❌', tone: 'grey' },
 };
 
 // 4-step progress tracker: Idea -> Script -> Video -> Published
 const STAGE_OF: Record<string, number> = {
-  intake: 1, scraping: 1, failed_scrape: 1,
+  intake: 1, in_progress: 1, failed: 1,
   drafting: 2, needs_review: 2, retry: 2, rejected: 2,
-  approved: 3, voice_generating: 3, voice_ready: 3, video_generating: 3, video_ready: 3, failed_voice: 3, failed_video: 3,
-  scheduled: 4, posted: 4,
+  approved: 3, voice_generating: 3, voice_ready: 3, video_generating: 3, video_ready: 3, redo_video: 3,
+  posting_approved: 4, posted: 4,
 };
 const STAGE_LABELS = ['Idea', 'Script', 'Video', 'Published'];
 
@@ -79,6 +77,10 @@ const STAGE_LABELS = ['Idea', 'Script', 'Video', 'Published'];
    ============================================================ */
 function esc(s?: string) {
   return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+/** data-* attributes are strings; sheet ids are row numbers. */
+function sameId(a: string | number, b: string | number) {
+  return Number(a) === Number(b);
 }
 function platText(p?: string[]) {
   return p && p.length ? p.join(' · ') : '—';
@@ -115,7 +117,7 @@ function dateHay(r: ContentRow) {
 function trackerHTML(status: string) {
   const stage = STAGE_OF[status] || 1;
   const posted = status === 'posted';
-  const errored = ['failed_scrape', 'failed_voice', 'failed_video'].includes(status);
+  const errored = status === 'failed';
   const stopped = status === 'rejected';
   let segs = '', labs = '';
   for (let i = 1; i <= 4; i++) {
@@ -204,8 +206,14 @@ export default function Dashboard() {
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const reload = useCallback(async () => {
-    const r = await fetchRows();
-    setRows(r);
+    try {
+      const r = await fetchRows();
+      setRows(r);
+    } catch (err) {
+      console.error(err);
+      toast(err instanceof Error ? err.message : 'Could not load content');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // init — load rows + set the "Last synced" time after mount (avoids hydration mismatch)
@@ -315,21 +323,27 @@ export default function Dashboard() {
     return shown;
   }
 
-  async function act(id: string, status: string) {
-    await updateStatus(id, status as any);
-    const msg = status === 'approved' ? 'Approved! Your video is being made.'
-      : status === 'scheduled' ? 'Approved — scheduled to publish. 🎉'
-      : status === 'retry' ? 'Sent back for a redo.'
-      : 'Marked as rejected.';
-    toast(msg);
-    refreshSynced();
-    reload();
+  async function act(id: string | number, status: string) {
+    try {
+      await updateStatus(id, status as any);
+      const msg =
+        status === 'approved' ? 'Approved! Voice & video are being made.'
+        : status === 'posting_approved' ? 'Approved — queued to publish. 🎉'
+        : status === 'retry' ? 'Sent back for a script redo.'
+        : status === 'redo_video' ? 'Sent back for a video redo.'
+        : 'Marked as rejected.';
+      toast(msg);
+      refreshSynced();
+      reload();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not update status');
+    }
   }
 
   // ---------- Modals ----------
   function closeModal() { setModal(null); }
-  function openItem(id: string) {
-    const r = rows.find((x) => x.id === id); if (!r) return;
+  function openItem(id: string | number) {
+    const r = rows.find((x) => sameId(x.id, id)); if (!r) return;
     const s = STATUS[r.status] || ({} as any);
     let body = `<p style="margin-top:0"><span class="status ${s.klass}"><span class="led"></span>${s.label}</span></p>
       <div class="block">${s.say || ''}</div>`;
@@ -347,16 +361,16 @@ export default function Dashboard() {
     }
     setModal({ title: r.title, body });
   }
-  function openVideo(id: string) {
-    const r = rows.find((x) => x.id === id); if (!r) return;
+  function openVideo(id: string | number) {
+    const r = rows.find((x) => sameId(x.id, id)); if (!r) return;
     const link = r.videoUrl || r.driveUrl || '#';
     let body = `<div class="videobox"><div class="play"><svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M8 6v12l10-6-10-6Z" fill="currentColor"/></svg></div></div>
       <div class="share-row"><input value="${link}" readonly data-select="1" /><button data-copy="${link}">Copy</button></div>`;
     if (r.driveUrl) body += `<p style="color:var(--muted);font-size:13.5px">Also saved to your Google Drive automatically.</p>`;
     setModal({ title: 'Watch: ' + r.title, body });
   }
-  function openShare(id: string) {
-    const r = rows.find((x) => x.id === id); if (!r) return;
+  function openShare(id: string | number) {
+    const r = rows.find((x) => sameId(x.id, id)); if (!r) return;
     let body = '';
     const links = r.postUrls || {};
     const platsWithLinks = Object.keys(links);
@@ -412,10 +426,9 @@ export default function Dashboard() {
     } else if (r.status === 'video_ready') {
       actions = `
         <button class="abtn a-watch" data-open="video" data-id="${r.id}"><svg viewBox="0 0 24 24" fill="none"><path d="M9 8v8l6-4-6-4Z" fill="currentColor"/></svg>Watch the video</button>
-        <button class="abtn a-approve" data-act="scheduled" data-id="${r.id}"><svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Approve to post</button>
-        <button class="abtn a-retry" data-act="retry" data-id="${r.id}"><svg viewBox="0 0 24 24" fill="none"><path d="M4 12a8 8 0 018-8 8 8 0 016.9 4M20 4v4h-4M20 12a8 8 0 01-8 8 8 8 0 01-6.9-4M4 20v-4h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Redo video</button>
-        <button class="abtn a-reject" data-act="rejected" data-id="${r.id}"><svg viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>Reject</button>
-        <span class="act-hint">Approving schedules it to publish to ${platText(r.platforms)}.</span>`;
+        <button class="abtn a-approve" data-act="posting_approved" data-id="${r.id}"><svg viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Approve to post</button>
+        <button class="abtn a-retry" data-act="redo_video" data-id="${r.id}"><svg viewBox="0 0 24 24" fill="none"><path d="M4 12a8 8 0 018-8 8 8 0 016.9 4M20 4v4h-4M20 12a8 8 0 01-8 8 8 8 0 01-6.9-4M4 20v-4h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Redo video</button>
+        <span class="act-hint">Approving queues it to publish to ${platText(r.platforms)}.</span>`;
     } else if (r.status === 'posted') {
       actions = `
         <button class="abtn a-share" data-open="share" data-id="${r.id}"><svg viewBox="0 0 24 24" fill="none"><path d="M4 12v7a1 1 0 001 1h14a1 1 0 001-1v-7M16 6l-4-4-4 4M12 2v13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Share links</button>
