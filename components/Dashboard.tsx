@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchRows, createRow, updateStatus } from '@/lib/client';
+import { toDrivePreviewUrl, toDriveViewUrl } from '@/lib/drive';
 import type { ContentRow, Status } from '@/lib/types';
 
 const SPINNER_HTML = '<span class="spinner" aria-hidden="true"></span>';
@@ -498,10 +499,29 @@ export default function Dashboard() {
   }
   function openVideo(id: string | number) {
     const r = rows.find((x) => sameId(x.id, id)); if (!r) return;
-    const link = r.videoUrl || r.driveUrl || '#';
-    let body = `<div class="videobox"><div class="play"><svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M8 6v12l10-6-10-6Z" fill="currentColor"/></svg></div></div>
-      <div class="share-row"><input value="${link}" readonly data-select="1" /><button data-copy="${link}">Copy</button></div>`;
-    if (r.driveUrl) body += `<p style="color:var(--muted);font-size:13.5px">Also saved to your Google Drive automatically.</p>`;
+    // Prefer final Drive URL (driveUrl), then video_url — both are typically Drive share links.
+    const raw = r.driveUrl || r.videoUrl || '';
+    const preview = raw ? toDrivePreviewUrl(raw) : null;
+    const link = raw ? toDriveViewUrl(raw) : '#';
+    const safeLink = esc(link);
+    let body = '';
+    if (preview) {
+      body += `<div class="videobox has-player">
+        <iframe src="${esc(preview)}" title="Video preview" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen referrerpolicy="no-referrer-when-downgrade"></iframe>
+      </div>`;
+    } else if (raw) {
+      // Non-Drive direct file (e.g. mp4) — try native player
+      body += `<div class="videobox has-player">
+        <video controls playsinline src="${esc(raw)}"></video>
+      </div>`;
+    } else {
+      body += `<div class="videobox"><div class="play"><svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M8 6v12l10-6-10-6Z" fill="currentColor"/></svg></div></div>
+        <div class="block">No video URL is available for this item yet.</div>`;
+    }
+    if (raw) {
+      body += `<div class="share-row"><input value="${safeLink}" readonly data-select="1" /><button data-copy="${safeLink}">Copy</button>
+        <a class="abtn a-open" href="${safeLink}" target="_blank" rel="noopener noreferrer">Open in Drive</a></div>`;
+    }
     setModal({ title: 'Watch: ' + r.title, body });
   }
   function openShare(id: string | number) {
