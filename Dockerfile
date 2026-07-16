@@ -1,0 +1,9 @@
+services:
+    nextjs:
+      build: .
+      container_name: drbob-content-review
+      restart: unless-stopped
+      ports:
+        - "3000:3000"
+      environment:
+        - NODE_ENV=production

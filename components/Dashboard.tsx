@@ -766,6 +766,16 @@ export default function Dashboard() {
             My Content<span className={'navbadge' + (needsReview > 0 ? ' show' : '')}>{needsReview}</span>
           </button>
           <button id="nav-export" className={view === 'export' ? 'active' : ''} onClick={() => go('export')}>Export</button>
+          <button
+            type="button"
+            className="btn-signout"
+            onClick={async () => {
+              await fetch('/api/auth/logout', { method: 'POST' });
+              window.location.href = '/login';
+            }}
+          >
+            Sign out
+          </button>
         </nav>
       </header>
 
