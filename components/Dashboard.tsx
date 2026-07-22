@@ -507,7 +507,7 @@ export default function Dashboard() {
     const useDriveLaunch = Boolean(preview && driveEmbedUnreliable());
     let body = '';
     if (useDriveLaunch) {
-      // iOS/Safari: Drive /preview iframes often fail (ITP). Launch Drive instead.
+      // Mobile / iOS / Safari: Drive /preview iframes are unreliable or too small to be useful. Launch Drive instead.
       body += `<a class="videobox video-launch" href="${safeLink}" target="_blank" rel="noopener noreferrer">
         <span class="play" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M8 6v12l10-6-10-6Z" fill="currentColor"/></svg></span>
         <span class="video-launch-label">Tap to play in Google Drive</span>

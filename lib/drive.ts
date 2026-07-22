@@ -6,8 +6,10 @@
  *   https://drive.google.com/uc?id=FILE_ID&export=download
  *   https://drive.google.com/file/d/FILE_ID/preview
  *
- * Note: Drive `/preview` iframes often fail on iOS/Safari (ITP / cross-site
- * tracking). Prefer opening the view URL on those clients.
+ * Note: Drive `/preview` iframes are unreliable on mobile in general (not
+ * just iOS/Safari) — small viewports, in-app/webview browsers, and
+ * third-party cookie restrictions all cause the embed to fail or render
+ * blank/broken. Prefer opening the view URL directly on those clients.
  */
 
 const FILE_ID_RE =
@@ -45,9 +47,12 @@ export function toDriveViewUrl(url: string): string {
 }
 
 /**
- * Drive preview iframes are unreliable on iOS and Safari (desktop + mobile)
- * because of Intelligent Tracking Prevention / third-party cookie blocking.
- * On those clients, open the file in Drive instead of embedding.
+ * Drive preview iframes are unreliable on:
+ *  - iOS and Safari (desktop + mobile), due to Intelligent Tracking
+ *    Prevention / third-party cookie blocking, and
+ *  - mobile devices generally (Android included), where the embed is
+ *    often too small/broken to be worth showing at all.
+ * On those clients, skip the iframe and open the file in Drive instead.
  */
 export function driveEmbedUnreliable(): boolean {
   if (typeof navigator === 'undefined') return false;
@@ -57,5 +62,11 @@ export function driveEmbedUnreliable(): boolean {
     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   const isSafari =
     /Safari/i.test(ua) && !/Chrome|Chromium|CriOS|Edg|EdgiOS|OPR|Firefox|FxiOS/i.test(ua);
-  return isIOS || isSafari;
+  const isMobileUA = /Android|Mobi|Mobile|Windows Phone/i.test(ua);
+  const isCoarsePointer =
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(pointer: coarse)').matches &&
+    window.matchMedia('(max-width: 820px)').matches;
+  return isIOS || isSafari || isMobileUA || isCoarsePointer;
 }
