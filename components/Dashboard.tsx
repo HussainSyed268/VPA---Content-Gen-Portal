@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchRows, createRow, updateStatus } from '@/lib/client';
-import { toDrivePreviewUrl, toDriveViewUrl } from '@/lib/drive';
+import { driveEmbedUnreliable, toDrivePreviewUrl, toDriveViewUrl } from '@/lib/drive';
 import type { ContentRow, Status } from '@/lib/types';
 
 const SPINNER_HTML = '<span class="spinner" aria-hidden="true"></span>';
@@ -176,7 +176,7 @@ function inputDateNum(val: string) {
   return y * 10000 + m * 100 + d;
 }
 
-type ModalState = { title: string; body: string } | null;
+type ModalState = { title: string; body: string; variant?: 'video' } | null;
 
 export default function Dashboard() {
   const [rows, setRows] = useState<ContentRow[]>([]);
@@ -504,15 +504,23 @@ export default function Dashboard() {
     const preview = raw ? toDrivePreviewUrl(raw) : null;
     const link = raw ? toDriveViewUrl(raw) : '#';
     const safeLink = esc(link);
+    const useDriveLaunch = Boolean(preview && driveEmbedUnreliable());
     let body = '';
-    if (preview) {
+    if (useDriveLaunch) {
+      // iOS/Safari: Drive /preview iframes often fail (ITP). Launch Drive instead.
+      body += `<a class="videobox video-launch" href="${safeLink}" target="_blank" rel="noopener noreferrer">
+        <span class="play" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M8 6v12l10-6-10-6Z" fill="currentColor"/></svg></span>
+        <span class="video-launch-label">Tap to play in Google Drive</span>
+      </a>
+      <p class="video-hint">In-app preview isn’t available on this device — the video opens in Google Drive.</p>`;
+    } else if (preview) {
       body += `<div class="videobox has-player">
-        <iframe src="${esc(preview)}" title="Video preview" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen referrerpolicy="no-referrer-when-downgrade"></iframe>
+        <iframe src="${esc(preview)}" title="Video preview" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen" allowfullscreen webkitallowfullscreen mozallowfullscreen></iframe>
       </div>`;
     } else if (raw) {
-      // Non-Drive direct file (e.g. mp4) — try native player
+      // Non-Drive direct file (e.g. mp4) — native player (playsinline required on iOS)
       body += `<div class="videobox has-player">
-        <video controls playsinline src="${esc(raw)}"></video>
+        <video controls playsinline webkit-playsinline preload="metadata" src="${esc(raw)}"></video>
       </div>`;
     } else {
       body += `<div class="videobox"><div class="play"><svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M8 6v12l10-6-10-6Z" fill="currentColor"/></svg></div></div>
@@ -520,9 +528,9 @@ export default function Dashboard() {
     }
     if (raw) {
       body += `<div class="share-row"><input value="${safeLink}" readonly data-select="1" /><button data-copy="${safeLink}">Copy</button>
-        <a class="abtn a-open" href="${safeLink}" target="_blank" rel="noopener noreferrer">Open in Drive</a></div>`;
+        <a class="abtn a-open" href="${safeLink}" target="_blank" rel="noopener noreferrer">${useDriveLaunch ? 'Open video' : 'Open in Drive'}</a></div>`;
     }
-    setModal({ title: 'Watch: ' + r.title, body });
+    setModal({ title: 'Watch: ' + r.title, body, variant: 'video' });
   }
   function openShare(id: string | number) {
     const r = rows.find((x) => sameId(x.id, id)); if (!r) return;
@@ -1004,7 +1012,7 @@ export default function Dashboard() {
       <footer className="foot">Dr Bob&apos;s Content Engine · Built by VectorPath AI · Confidential</footer>
 
       <div className={'overlay' + (modal ? ' show' : '')} id="overlay" onClick={(e) => { if (e.target === e.currentTarget) closeModal(); }}>
-        <div className="modal" id="modal" onClick={onModalClick}>
+        <div className={'modal' + (modal?.variant === 'video' ? ' modal--video' : '')} id="modal" onClick={onModalClick}>
           {modal && (
             <>
               <div className="modal-head"><h3 dangerouslySetInnerHTML={{ __html: esc(modal.title) }} /><button className="x" onClick={closeModal}>✕</button></div>
